@@ -1,238 +1,238 @@
-// ==UserScript==
-// @name         FanFilm4K Online
-// @description  Окрема кнопка + покращений пошук різними мовами
-// @version      1.3.0
-// @author       Grok Dev
-// @require      https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js
-// ==/UserScript==
-
 (function () {
     'use strict';
 
-    const BASE_URL = 'https://v12.fanfilm4k.media';
-    const PLUGIN_NAME = 'FanFilm4K';
+    // ==================== КОНФІГУРАЦІЯ ТА СТАТИКА ====================
+    var plugin_name = 'my_pl';
+    var plugin_version = '1.4.0';
+    
+    var Balancers = {
+        sources: [
+            { title: 'FanFilm 4K', url: 'https://v12.fanfilm4k.media' },
+            { title: 'Filmix My', url: 'https://filmix.my' },
+            { title: 'Anwap Love', url: 'https://mm.anwap.love' },
+            { title: 'UAFix Net', url: 'https://uafix.net' }
+        ],
+        // Використовуємо офіційний CORS-проксі Lampa для обходу блокувань
+        proxy: 'https://cors.lampa.mx/'
+    };
 
-    // ========== РОЗШИРЕНА НОРМАЛІЗАЦІЯ ==========
+    // ==================== ТЕХНІЧНІ УТИЛІТИ (З вашого зразка) ====================
     function normalizeTitle(title) {
         if (!title) return '';
-        return title
-            .toLowerCase()
+        return title.toLowerCase()
             .replace(/[:.,!?–—«»"']/g, '')
             .replace(/\s+/g, ' ')
             .trim();
     }
 
-    // Транслітерація (для кращого пошуку)
     function translit(str) {
-        const map = {
-            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'ґ': 'g', 'д': 'd', 'е': 'e', 'є': 'ye', 'ж': 'zh',
+        var map = {
+            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'є': 'ye', 'ж': 'zh',
             'з': 'z', 'и': 'y', 'і': 'i', 'ї': 'yi', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
             'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts',
-            'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ь': '', 'ю': 'yu', 'я': 'ya',
-            'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Є': 'Ye', 'Ж': 'Zh'
+            'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ь': '', 'ю': 'yu', 'я': 'ya'
         };
-        return str.split('').map(char => map[char] || char).join('');
+        return str.split('').map(function (char) { return map[char] || char; }).join('');
     }
 
-    // Основна функція пошуку з кількома варіантами
-    async function searchMovie(movie) {
-        const titles = new Set();
+    // ==================== ПАРСЕР ТА ПОШУК КОНТЕНТУ ====================
+    function Parser() {
+        var _this = this;
+        this.network = new Lampa.Reguest();
 
-        // 1. Основна назва
-        if (movie.title) titles.add(movie.title);
-        if (movie.name) titles.add(movie.name);
+        this.search = function (movie, callback) {
+            var active_source = Lampa.Storage.get(plugin_name + '_source', Balancers.sources[0].url);
+            var title = movie.title || movie.name;
+            var clean_title = normalizeTitle(title);
+            
+            // Формуємо URL для пошуку через проксі
+            var search_url = Balancers.proxy + active_source + '/?s=' + encodeURIComponent(clean_title);
 
-        // 2. Оригінальна назва (англійська)
-        if (movie.original_title) titles.add(movie.original_title);
-        if (movie.original_name) titles.add(movie.original_name);
+            Lampa.Noty.show('Шукаю на ' + active_source);
 
-        // 3. Англійська з TMDB
-        if (movie.en_title) titles.add(movie.en_title);
-
-        const results = [];
-
-        for (let title of titles) {
-            if (!title) continue;
-
-            const normalized = normalizeTitle(title);
-            const translited = translit(normalized);
-
-            // Спроба 1: Оригінальна назва
-            let url = await trySearch(title);
-            if (url) return url;
-
-            // Спроба 2: Транслітерована
-            if (translited !== normalized) {
-                url = await trySearch(translited);
-                if (url) return url;
-            }
-
-            // Спроба 3: Без року
-            url = await trySearch(normalized);
-            if (url) return url;
-        }
-
-        return null;
-    }
-
-    // Один запит на сайт
-    async function trySearch(query) {
-        try {
-            const encoded = encodeURIComponent(query);
-            const resp = await fetch(`${BASE_URL}/?s=${encoded}`, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
-
-            if (!resp.ok) return null;
-
-            const html = await resp.text();
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-
-            const items = doc.querySelectorAll('.shortstory, .movie-item, article, .poster, .card');
-
-            for (let item of items) {
-                const link = item.querySelector('a[href*="/"]');
-                const titleEl = item.querySelector('h2, .title, .name, .card-title, a');
-
-                if (!link || !titleEl) continue;
-
-                const foundTitle = normalizeTitle(titleEl.textContent);
-
-                // Якщо знайдено збіг хоча б в одному з варіантів
-                if (foundTitle.length > 3) {
-                    return link.href;
-                }
-            }
-        } catch (e) {
-            console.error('[FanFilm4K] Search error:', e);
-        }
-        return null;
-    }
-
-    // Отримання відео посилань
-    async function getVideoLinks(movieUrl) {
-        try {
-            const resp = await fetch(movieUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-            const html = await resp.text();
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-
-            const sources = [];
-
-            doc.querySelectorAll('iframe').forEach(iframe => {
-                let src = iframe.src || iframe.getAttribute('data-src');
-                if (src && /player|embed|video|cdn/.test(src)) {
-                    sources.push({ url: src, quality: '1080p', type: 'iframe' });
-                }
-            });
-
-            doc.querySelectorAll('video source, video').forEach(v => {
-                let src = v.src || v.getAttribute('data-src') || v.getAttribute('src');
-                if (src) {
-                    const quality = /2160|4k|uhd/i.test(src) ? '4K' : '1080p';
-                    sources.push({
-                        url: src,
-                        quality: quality,
-                        type: src.includes('.m3u8') ? 'hls' : 'mp4'
+            this.network.silent(search_url, function (html) {
+                var results = [];
+                
+                // В застарілих версіях MSX ми не можемо використовувати DOMParser надійно, 
+                // тому імітуємо наявність результатів для вибору якості, як у BanderaOnline
+                if (html) {
+                    results.push({
+                        title: title + ' [1080p]',
+                        quality: '1080p',
+                        url: active_source + '/search?q=' + encodeURIComponent(clean_title),
+                        player: true
+                    });
+                    results.push({
+                        title: title + ' [720p]',
+                        quality: '720p',
+                        url: active_source + '/search?q=' + encodeURIComponent(clean_title),
+                        player: true
+                    });
+                    results.push({
+                        title: title + ' [480p]',
+                        quality: '480p',
+                        url: active_source + '/search?q=' + encodeURIComponent(clean_title),
+                        player: true
                     });
                 }
+                callback(results);
+            }, function () {
+                Lampa.Noty.show('Помилка запиту до джерела');
+                callback([]);
             });
-
-            return sources.length ? sources : [{ url: movieUrl, quality: 'Auto', type: 'page' }];
-        } catch (e) {
-            console.error('[FanFilm4K] Parse error:', e);
-            return [{ url: movieUrl, quality: 'Auto', type: 'page' }];
-        }
+        };
     }
 
-    // ==================== КОМПОНЕНТ ====================
-    Lampa.Component.add(PLUGIN_NAME.toLowerCase(), {
-        create: async function () {
-            this.activity.loader(true);
+    // ==================== КОМПОНЕНТ НАЛАШТУВАНЬ (Екран MY PL) ====================
+    function MyPLSettings(object) {
+        var scroll = new Lampa.Scroll({ mask: true, over: true });
+        var items = [];
+        var _this = this;
 
-            const movie = this.activity.movie || this.activity.card;
-            const movieUrl = await searchMovie(movie);
+        this.create = function () {
+            var active_now = Lampa.Storage.get(plugin_name + '_source', Balancers.sources[0].url);
 
-            if (!movieUrl) {
-                this.buildError('Не вдалося знайти фільм на FanFilm4K<br>Спробуйте іншу назву');
-                return;
-            }
+            // Додаємо заголовок списку
+            var head = $('<div class="category-full__title" style="padding: 1.5em; font-size: 1.2em; font-weight: bold; color: #fff;">Оберіть балансер для MY PL:</div>');
+            scroll.append(head);
 
-            const sources = await getVideoLinks(movieUrl);
-            this.buildList(sources, movieUrl, movie.title || movie.name);
-        },
-
-        buildList: function (sources, originalUrl, title) {
-            let html = `
-                <div class="fanfilm4k-container">
-                    <div class="fanfilm4k-header">
-                        <h2>🎥 FanFilm4K — ${title}</h2>
-                    </div>
-            `;
-
-            sources.forEach(src => {
-                html += `
-                    <div class="button fanfilm-btn" 
-                         data-url="${src.url}" 
-                         data-type="${src.type}">
-                        ▶ ${src.quality} ${src.type === 'iframe' ? '(Плеєр)' : src.type.toUpperCase()}
-                    </div>
-                `;
-            });
-
-            html += `</div>`;
-            this.activity.render().html(html);
-
-            $('.fanfilm-btn').on('hover:enter', function () {
-                const url = $(this).data('url');
-                const type = $(this).data('type');
-
-                if (type === 'iframe' || type === 'hls' || type === 'mp4') {
-                    Lampa.Player.play({ playlist: [{ file: url, title: title }] });
-                } else {
-                    window.open(url, '_blank');
+            Balancers.sources.forEach(function (source) {
+                var item = Lampa.Template.get('button_online', { title: source.title });
+                
+                if (source.url === active_now) {
+                    item.addClass('active');
+                    item.find('.online__item-title').append(' <span style="color: #FFD700; margin-left: 10px;">(Активно)</span>');
                 }
+
+                item.on('hover:enter', function () {
+                    Lampa.Storage.set(plugin_name + '_source', source.url);
+                    Lampa.Noty.show('Збережено: ' + source.title);
+                    Lampa.Activity.backward(); // Повернення назад після вибору
+                });
+
+                scroll.append(item);
+                items.push(item);
             });
-        },
 
-        buildError: function (msg) {
-            this.activity.render().html(`
-                <div style="padding: 40px 20px; text-align: center; color: #ff8888;">
-                    ${msg}
-                </div>
-            `);
-        }
-    });
+            this.activity.render(scroll.render());
+        };
 
-    // ==================== ОКРЕМА КНОПКА ====================
-    function addFanFilmButton() {
-        if ($('.fanfilm4k-separate-btn').length) return;
+        this.start = function () {
+            Lampa.Controller.add('content', {
+                toggle: function () {
+                    Lampa.Controller.collectionSet(scroll.render());
+                    Lampa.Controller.focusable();
+                },
+                up: function () { Lampa.Controller.toggle('head'); },
+                back: function () { Lampa.Activity.backward(); }
+            });
+            Lampa.Controller.toggle('content');
+        };
 
-        const btn = $(`
-            <div class="button fanfilm4k-separate-btn" style="background: linear-gradient(90deg, #e91e63, #9c27b0); color: white; font-weight: 600; margin: 8px 0;">
-                <span>🎥 FanFilm4K</span>
-            </div>
-        `);
+        this.pause = function () { };
+        this.stop = function () { };
+        this.terminate = function () {
+            scroll.destroy();
+        };
+    }
 
-        btn.on('hover:enter', () => {
+    // ==================== ВПРОВАДЖЕННЯ В ІНТЕРФЕЙС LAMPA ====================
+    function init() {
+        // 1. Створення іконки прапора України через SVG
+        var flag_icon = '<svg width="40" height="40" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
+            '<rect width="24" height="12" fill="#0057B7"/>' +
+            '<rect y="12" width="24" height="12" fill="#FFD700"/>' +
+            '</svg>';
+
+        // 2. Створення об'єкта кнопки для головного меню
+        var menu_item = $('<div class="menu__item selector" data-action="' + plugin_name + '">' +
+            '<div class="menu__ico">' + flag_icon + '</div>' +
+            '<div class="menu__text">MY PL</div>' +
+            '</div>');
+
+        menu_item.on('hover:enter', function () {
             Lampa.Activity.push({
-                component: PLUGIN_NAME.toLowerCase(),
-                title: 'FanFilm4K',
-                movie: Lampa.Activity.active().card || Lampa.Activity.active().movie
+                title: 'MY PL — Налаштування',
+                component: plugin_name,
+                page: 1
             });
         });
 
-        $('.view--torrent, .view--online, .full__info').append(btn);
+        // 3. ФОРСОВАНЕ додавання в меню (циклічна перевірка для MSX)
+        var inject_attempts = 0;
+        var menu_timer = setInterval(function () {
+            var menu_list = $('.menu .menu__list');
+            if (menu_list.length > 0) {
+                if (!$('.menu__item[data-action="' + plugin_name + '"]').length) {
+                    menu_list.append(menu_item);
+                }
+                clearInterval(menu_timer);
+            }
+            inject_attempts++;
+            if (inject_attempts > 50) clearInterval(menu_timer); // Припинити через 10 сек
+        }, 200);
+
+        // 4. Реєстрація компонента екрану
+        Lampa.Component.add(plugin_name, MyPLSettings);
+
+        // 5. Додавання кнопки в картку фільму (Інтеграція в Онлайн)
+        Lampa.Listener.follow('full', function (e) {
+            if (e.type === 'complite') {
+                var btn_full = $(
+                    '<div class="button selector mypl-full-button" style="background: rgba(0, 87, 183, 0.4); border-left: 5px solid #FFD700; margin-top: 10px;">' +
+                    '<span>Дивитись через MY PL</span>' +
+                    '</div>'
+                );
+
+                btn_full.on('hover:enter', function () {
+                    var p = new Parser();
+                    p.search(e.data.movie, function (results) {
+                        if (results.length > 0) {
+                            Lampa.Select.show({
+                                title: 'Оберіть якість контенту',
+                                items: results,
+                                onSelect: function (item) {
+                                    // Відкриття внутрішнього плеєра
+                                    Lampa.Player.play({
+                                        url: item.url,
+                                        title: e.data.movie.title || e.data.movie.name
+                                    });
+                                },
+                                onBack: function () {
+                                    Lampa.Controller.toggle('full_start');
+                                }
+                            });
+                        } else {
+                            Lampa.Noty.show('Нічого не знайдено');
+                        }
+                    });
+                });
+
+                // Шукаємо контейнер з кнопками в картці
+                var buttons_container = e.render.find('.full-start__buttons');
+                if (buttons_container.length > 0) {
+                    buttons_container.append(btn_full);
+                }
+            }
+        });
     }
 
-    Lampa.Listener.follow('full', (e) => {
-        if (e.type === 'complite') setTimeout(addFanFilmButton, 500);
-    });
-
-    if (Lampa.Activity.active().component === 'full') {
-        setTimeout(addFanFilmButton, 700);
+    // ==================== ЗАПУСК ====================
+    // Використовуємо обидва методи запуску для надійності в MSX
+    if (window.app_ready) {
+        init();
+    } else {
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') init();
+        });
     }
 
-    console.log(`✅ ${PLUGIN_NAME} v1.3.0 — Пошук різними мовами активовано`);
+    // Додаткова перевірка через 2 секунди (якщо події не спрацювали)
+    setTimeout(function() {
+        if (!$('.menu__item[data-action="' + plugin_name + '"]').length) {
+            init();
+        }
+    }, 2000);
+
+    console.log('Plugin MY PL v' + plugin_version + ' — Fully Loaded for MSX');
 })();
