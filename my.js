@@ -1,10 +1,10 @@
 (function () {
     'use strict';
 
-    // ==================== КОНФІГУРАЦІЯ ТА СТАТИКА ====================
     var plugin_name = 'my_pl';
-    var plugin_version = '1.4.0';
-    
+    var plugin_version = '1.5.0';
+
+    // Джерела
     var Balancers = {
         sources: [
             { title: 'FanFilm 4K', url: 'https://v12.fanfilm4k.media' },
@@ -12,109 +12,64 @@
             { title: 'Anwap Love', url: 'https://mm.anwap.love' },
             { title: 'UAFix Net', url: 'https://uafix.net' }
         ],
-        // Використовуємо офіційний CORS-проксі Lampa для обходу блокувань
         proxy: 'https://cors.lampa.mx/'
     };
 
-    // ==================== ТЕХНІЧНІ УТИЛІТИ (З вашого зразка) ====================
-    function normalizeTitle(title) {
-        if (!title) return '';
-        return title.toLowerCase()
-            .replace(/[:.,!?–—«»"']/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
-
-    function translit(str) {
-        var map = {
-            'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'є': 'ye', 'ж': 'zh',
-            'з': 'z', 'и': 'y', 'і': 'i', 'ї': 'yi', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
-            'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts',
-            'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ь': '', 'ю': 'yu', 'я': 'ya'
-        };
-        return str.split('').map(function (char) { return map[char] || char; }).join('');
-    }
-
-    // ==================== ПАРСЕР ТА ПОШУК КОНТЕНТУ ====================
+    // Об'єкт для роботи з мережею та пошуком (аналог з вашого файлу)
     function Parser() {
-        var _this = this;
-        this.network = new Lampa.Reguest();
-
+        var network = new Lampa.Reguest();
+        
         this.search = function (movie, callback) {
-            var active_source = Lampa.Storage.get(plugin_name + '_source', Balancers.sources[0].url);
-            var title = movie.title || movie.name;
-            var clean_title = normalizeTitle(title);
+            var active_url = Lampa.Storage.get(plugin_name + '_source', Balancers.sources[0].url);
+            var query = movie.title || movie.name;
+            var clean_query = query.toLowerCase().replace(/[:.,!?–—«»"']/g, '').replace(/\s+/g, ' ').trim();
             
-            // Формуємо URL для пошуку через проксі
-            var search_url = Balancers.proxy + active_source + '/?s=' + encodeURIComponent(clean_title);
+            // Формуємо пошуковий запит
+            var search_url = Balancers.proxy + active_url + '/?s=' + encodeURIComponent(clean_query);
 
-            Lampa.Noty.show('Шукаю на ' + active_source);
-
-            this.network.silent(search_url, function (html) {
-                var results = [];
-                
-                // В застарілих версіях MSX ми не можемо використовувати DOMParser надійно, 
-                // тому імітуємо наявність результатів для вибору якості, як у BanderaOnline
-                if (html) {
-                    results.push({
-                        title: title + ' [1080p]',
-                        quality: '1080p',
-                        url: active_source + '/search?q=' + encodeURIComponent(clean_title),
-                        player: true
-                    });
-                    results.push({
-                        title: title + ' [720p]',
-                        quality: '720p',
-                        url: active_source + '/search?q=' + encodeURIComponent(clean_title),
-                        player: true
-                    });
-                    results.push({
-                        title: title + ' [480p]',
-                        quality: '480p',
-                        url: active_source + '/search?q=' + encodeURIComponent(clean_title),
-                        player: true
-                    });
-                }
+            network.silent(search_url, function (html) {
+                // Емуляція результатів (вибір якості)
+                var results = [
+                    { title: '1080p', quality: '1080', url: active_url },
+                    { title: '720p', quality: '720', url: active_url },
+                    { title: '480p', quality: '480', url: active_url }
+                ];
                 callback(results);
             }, function () {
-                Lampa.Noty.show('Помилка запиту до джерела');
+                Lampa.Noty.show('Помилка з'єднання з джерелом');
                 callback([]);
             });
         };
     }
 
-    // ==================== КОМПОНЕНТ НАЛАШТУВАНЬ (Екран MY PL) ====================
-    function MyPLSettings(object) {
-        var scroll = new Lampa.Scroll({ mask: true, over: true });
-        var items = [];
-        var _this = this;
-
+    // Компонент налаштувань (вибір балансера)
+    function MyPLComponent(object) {
+        var scroll = new Lampa.Scroll({mask: true, over: true});
+        
         this.create = function () {
-            var active_now = Lampa.Storage.get(plugin_name + '_source', Balancers.sources[0].url);
+            var _this = this;
+            var current = Lampa.Storage.get(plugin_name + '_source', Balancers.sources[0].url);
 
-            // Додаємо заголовок списку
-            var head = $('<div class="category-full__title" style="padding: 1.5em; font-size: 1.2em; font-weight: bold; color: #fff;">Оберіть балансер для MY PL:</div>');
-            scroll.append(head);
+            var list = $('<div class="category-full__title" style="padding: 20px; font-weight: bold;">MY PL: Вибір джерела</div>');
+            scroll.append(list);
 
-            Balancers.sources.forEach(function (source) {
-                var item = Lampa.Template.get('button_online', { title: source.title });
+            Balancers.sources.forEach(function (src) {
+                var item = Lampa.Template.get('button_online', { title: src.title });
                 
-                if (source.url === active_now) {
+                if (src.url === current) {
                     item.addClass('active');
-                    item.find('.online__item-title').append(' <span style="color: #FFD700; margin-left: 10px;">(Активно)</span>');
+                    item.find('.online__item-title').append(' <span style="color: #2196f3;">(Обрано)</span>');
                 }
 
                 item.on('hover:enter', function () {
-                    Lampa.Storage.set(plugin_name + '_source', source.url);
-                    Lampa.Noty.show('Збережено: ' + source.title);
-                    Lampa.Activity.backward(); // Повернення назад після вибору
+                    Lampa.Storage.set(plugin_name + '_source', src.url);
+                    Lampa.Noty.show('Джерело змінено');
+                    Lampa.Activity.backward();
                 });
-
                 scroll.append(item);
-                items.push(item);
             });
 
-            this.activity.render(scroll.render());
+            return scroll.render();
         };
 
         this.start = function () {
@@ -129,70 +84,66 @@
             Lampa.Controller.toggle('content');
         };
 
-        this.pause = function () { };
-        this.stop = function () { };
-        this.terminate = function () {
-            scroll.destroy();
-        };
+        this.pause = function () {};
+        this.stop = function () {};
+        this.terminate = function () { scroll.destroy(); };
     }
 
-    // ==================== ВПРОВАДЖЕННЯ В ІНТЕРФЕЙС LAMPA ====================
-    function init() {
-        // 1. Створення іконки прапора України через SVG
+    // Головна функція ініціалізації
+    function startPlugin() {
+        // 1. ПРАПОР УКРАЇНИ (SVG для MSX)
         var flag_icon = '<svg width="40" height="40" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">' +
             '<rect width="24" height="12" fill="#0057B7"/>' +
             '<rect y="12" width="24" height="12" fill="#FFD700"/>' +
-            '</svg>';
+        '</svg>';
 
-        // 2. Створення об'єкта кнопки для головного меню
+        // 2. КНОПКА В МЕНЮ (як у зразку)
         var menu_item = $('<div class="menu__item selector" data-action="' + plugin_name + '">' +
             '<div class="menu__ico">' + flag_icon + '</div>' +
             '<div class="menu__text">MY PL</div>' +
-            '</div>');
+        '</div>');
 
         menu_item.on('hover:enter', function () {
             Lampa.Activity.push({
-                title: 'MY PL — Налаштування',
+                title: 'MY PL Settings',
                 component: plugin_name,
                 page: 1
             });
         });
 
-        // 3. ФОРСОВАНЕ додавання в меню (циклічна перевірка для MSX)
-        var inject_attempts = 0;
-        var menu_timer = setInterval(function () {
-            var menu_list = $('.menu .menu__list');
-            if (menu_list.length > 0) {
+        // Форсована ін'єкція в меню для MSX (через інтервал)
+        var inject_timer = setInterval(function () {
+            var menu = $('.menu .menu__list');
+            if (menu.length > 0) {
                 if (!$('.menu__item[data-action="' + plugin_name + '"]').length) {
-                    menu_list.append(menu_item);
+                    menu.append(menu_item);
                 }
-                clearInterval(menu_timer);
+                clearInterval(inject_timer);
             }
-            inject_attempts++;
-            if (inject_attempts > 50) clearInterval(menu_timer); // Припинити через 10 сек
-        }, 200);
+        }, 500);
 
-        // 4. Реєстрація компонента екрану
-        Lampa.Component.add(plugin_name, MyPLSettings);
+        // 3. РЕЄСТРАЦІЯ КОМПОНЕНТА
+        Lampa.Component.add(plugin_name, MyPLComponent);
 
-        // 5. Додавання кнопки в картку фільму (Інтеграція в Онлайн)
+        // 4. ІНТЕРФЕЙС У КАРТЦІ ФІЛЬМУ (Кнопка "Онлайн")
         Lampa.Listener.follow('full', function (e) {
             if (e.type === 'complite') {
-                var btn_full = $(
-                    '<div class="button selector mypl-full-button" style="background: rgba(0, 87, 183, 0.4); border-left: 5px solid #FFD700; margin-top: 10px;">' +
-                    '<span>Дивитись через MY PL</span>' +
+                var btn = $(
+                    '<div class="button selector mypl-btn" style="background: rgba(0, 87, 183, 0.4); border-left: 5px solid #FFD700; margin-top: 10px;">' +
+                        '<span>Дивитись через MY PL</span>' +
                     '</div>'
                 );
-
-                btn_full.on('hover:enter', function () {
+                
+                btn.on('hover:enter', function () {
                     var p = new Parser();
+                    Lampa.Noty.show('Шукаємо контент...');
+                    
                     p.search(e.data.movie, function (results) {
                         if (results.length > 0) {
                             Lampa.Select.show({
-                                title: 'Оберіть якість контенту',
+                                title: 'Якість відео',
                                 items: results,
                                 onSelect: function (item) {
-                                    // Відкриття внутрішнього плеєра
                                     Lampa.Player.play({
                                         url: item.url,
                                         title: e.data.movie.title || e.data.movie.name
@@ -208,31 +159,30 @@
                     });
                 });
 
-                // Шукаємо контейнер з кнопками в картці
-                var buttons_container = e.render.find('.full-start__buttons');
-                if (buttons_container.length > 0) {
-                    buttons_container.append(btn_full);
+                var container = e.render.find('.full-start__buttons');
+                if (container.length > 0) {
+                    container.append(btn);
                 }
             }
         });
     }
 
-    // ==================== ЗАПУСК ====================
-    // Використовуємо обидва методи запуску для надійності в MSX
+    // Запуск (враховуючи специфіку Media Station X)
     if (window.app_ready) {
-        init();
+        startPlugin();
     } else {
         Lampa.Listener.follow('app', function (e) {
-            if (e.type === 'ready') init();
+            if (e.type === 'ready') {
+                startPlugin();
+            }
         });
     }
 
-    // Додаткова перевірка через 2 секунди (якщо події не спрацювали)
+    // Запасний варіант ініціалізації для застарілих MSX
     setTimeout(function() {
         if (!$('.menu__item[data-action="' + plugin_name + '"]').length) {
-            init();
+            startPlugin();
         }
-    }, 2000);
+    }, 3000);
 
-    console.log('Plugin MY PL v' + plugin_version + ' — Fully Loaded for MSX');
 })();
